@@ -1,7 +1,8 @@
-import { App, MarkdownView, Notice, TFile } from "obsidian";
+import { App, Component, MarkdownView, Notice, TFile } from "obsidian";
 import { StateField } from "@codemirror/state";
 import { DecorationSet, EditorView } from "@codemirror/view";
 import { BlockTree, HtmlBlockNode } from "./BlockTree";
+import { createContainerElement, fillBlock } from "./ContainerRenderer";
 import { HtmlBlockParser } from "./HtmlBlockParser";
 import { lastBuildReason } from "./LivePreviewBlocks";
 
@@ -67,6 +68,13 @@ export async function writeDiagnostics(
     describe(tree, lines, supportedTags, report, 0);
   }
 
+  report.push("", "## Rendered output", "");
+  if (tree.length === 0) {
+    report.push("(nothing to render)");
+  } else {
+    report.push(...(await renderSample(app, supportedTags, lines, tree[0], view.file?.path ?? "")));
+  }
+
   await write(app, report.join("\n"));
   new Notice(`Details Markdown: wrote ${REPORT_PATH}`);
 }
@@ -87,6 +95,47 @@ function describe(
         `${node.children.length} nested, parse: ${parsed === null ? "**FAILED**" : `ok (\`${parsed.openTag}\`)`}`
     );
     describe(node.children, lines, supportedTags, report, depth + 1);
+  }
+}
+
+/**
+ * Runs the real render path into a detached element and reports the HTML it produces.
+ *
+ * The stages above can all report success while the output is still wrong; this is the
+ * only line that shows what the user is actually looking at.
+ */
+async function renderSample(
+  app: App,
+  supportedTags: ReadonlySet<string>,
+  lines: readonly string[],
+  node: HtmlBlockNode,
+  sourcePath: string
+): Promise<string[]> {
+  const sourceLines = lines.slice(node.range.startLine, node.range.endLine + 1);
+  const component = new Component();
+  component.load();
+  try {
+    const element = createContainerElement(sourceLines[0], node.range.tag);
+    const filled = await fillBlock(
+      { app, supportedTags, sourcePath, component, renderMath: false },
+      element,
+      sourceLines,
+      node.range.startLine
+    );
+    const html = element.innerHTML;
+    return [
+      `- fillBlock returned: **${filled}**`,
+      `- child elements produced: **${element.children.length}**`,
+      `- html length: ${html.length}`,
+      "",
+      "```html",
+      html.slice(0, 3000),
+      "```",
+    ];
+  } catch (error) {
+    return ["**render threw:**", "", "```", String(error), "```"];
+  } finally {
+    component.unload();
   }
 }
 
