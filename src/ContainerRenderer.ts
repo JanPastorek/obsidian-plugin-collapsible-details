@@ -8,6 +8,13 @@ import {
 import { BlockTree, HtmlBlockNode } from "./BlockTree";
 import { HtmlBlockParser } from "./HtmlBlockParser";
 
+/**
+ * Records which source line a rendered element came from, so a click on the output
+ * can put the caret back on the line that produced it. Without it the only thing a
+ * click could do is jump to the start of the whole block.
+ */
+export const SOURCE_LINE_ATTRIBUTE = "data-details-markdown-line";
+
 /** Everything a render pass needs, so this module stays independent of both views. */
 export interface RenderContext {
   readonly app: App;
@@ -94,7 +101,45 @@ async function renderMarkdownSlice(
   if (slice.trim() === "") {
     return;
   }
+  const before = target.children.length;
   await MarkdownRenderer.render(context.app, slice, target, context.sourcePath, context.component);
+  tagSourceLines(target, before, bodyLines, bodyStartLine, fromLine);
+}
+
+/**
+ * Labels the elements a slice just produced with their source lines.
+ *
+ * The renderer emits one top-level element per Markdown block, in order, so walking
+ * the slice's own blocks alongside them lines the two up. A blank line inside a
+ * construct (a list, a fenced block) does not start a new element, so the count can
+ * drift; when it does the remaining elements keep the last line that was certain,
+ * which lands the caret nearby rather than nowhere.
+ */
+function tagSourceLines(
+  target: HTMLElement,
+  firstNewChild: number,
+  bodyLines: readonly string[],
+  bodyStartLine: number,
+  fromLine: number
+): void {
+  const sliceLines = bodyLines.slice(fromLine - bodyStartLine);
+  let line = fromLine;
+  let cursor = 0;
+  for (let i = firstNewChild; i < target.children.length; i++) {
+    // Skip blank lines: they separate blocks and belong to neither.
+    while (cursor < sliceLines.length && sliceLines[cursor].trim() === "") {
+      cursor++;
+      line++;
+    }
+    if (cursor < sliceLines.length) {
+      line = fromLine + cursor;
+    }
+    target.children[i].setAttribute(SOURCE_LINE_ATTRIBUTE, String(line));
+    // Advance past this block: consume until the next blank line.
+    while (cursor < sliceLines.length && sliceLines[cursor].trim() !== "") {
+      cursor++;
+    }
+  }
 }
 
 async function renderNested(
@@ -109,6 +154,7 @@ async function renderNested(
     node.range.endLine - bodyStartLine + 1
   );
   const element = createContainerElement(sourceLines[0], node.range.tag);
+  element.setAttribute(SOURCE_LINE_ATTRIBUTE, String(node.range.startLine));
   target.appendChild(element);
   if (!(await fillBlock(context, element, sourceLines, node.range.startLine))) {
     // The scanner found it, so this should not happen — but never drop the content.

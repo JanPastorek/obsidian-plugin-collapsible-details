@@ -14,7 +14,11 @@ import { DecorationSet } from "@codemirror/view";
 import { createContainerElement, fillBlock, flushMath } from "./ContainerRenderer";
 import { writeDiagnostics } from "./Diagnostics";
 import { HtmlBlockParser } from "./HtmlBlockParser";
-import { LivePreviewHost, createLivePreviewExtension } from "./LivePreviewBlocks";
+import {
+  LivePreviewHost,
+  createBlockNavigationKeymap,
+  createLivePreviewExtension,
+} from "./LivePreviewBlocks";
 import { HtmlBlockRange, HtmlBlockRangeScanner } from "./HtmlBlockRangeScanner";
 import { SectionRoleClassifier } from "./SectionRoleClassifier";
 import { SupportedTags } from "./SupportedTags";
@@ -105,7 +109,7 @@ export default class DetailsMarkdownPlugin extends Plugin implements LivePreview
     // over the same HTML block and outranks a plainly registered extension, so its
     // widget wins and ours is built but never shown. Raising precedence is what
     // makes our decoration the one that renders.
-    this.editorExtensions.push(Prec.highest(this.livePreviewField));
+    this.editorExtensions.push(Prec.highest(this.livePreviewField), createBlockNavigationKeymap());
     this.registerEditorExtension(this.editorExtensions);
 
     this.addCommand({
@@ -156,7 +160,7 @@ export default class DetailsMarkdownPlugin extends Plugin implements LivePreview
   private refreshEditorExtensions(): void {
     this.editorExtensions.length = 0;
     this.livePreviewField = createLivePreviewExtension(this);
-    this.editorExtensions.push(Prec.highest(this.livePreviewField));
+    this.editorExtensions.push(Prec.highest(this.livePreviewField), createBlockNavigationKeymap());
     this.app.workspace.updateOptions();
   }
 

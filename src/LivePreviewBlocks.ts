@@ -1,9 +1,15 @@
 import { App, Component, editorInfoField, editorLivePreviewField } from "obsidian";
-import { EditorState, Extension, RangeSetBuilder, StateField } from "@codemirror/state";
-import { Decoration, DecorationSet, EditorView, WidgetType } from "@codemirror/view";
+import { EditorState, Extension, Prec, RangeSetBuilder, StateField } from "@codemirror/state";
+import { Decoration, DecorationSet, EditorView, WidgetType, keymap } from "@codemirror/view";
 import { isBeingEdited } from "./BlockEditingState";
+import { blockAbove, blockBelow, selectRenderedBlocks } from "./BlockNavigation";
 import { BlockTree, HtmlBlockNode } from "./BlockTree";
-import { createContainerElement, fillBlock, flushMath } from "./ContainerRenderer";
+import {
+  SOURCE_LINE_ATTRIBUTE,
+  createContainerElement,
+  fillBlock,
+  flushMath,
+} from "./ContainerRenderer";
 import { HtmlBlockParser } from "./HtmlBlockParser";
 
 /** What the extension needs from the plugin, kept narrow so this file stays testable in isolation. */
@@ -132,6 +138,28 @@ class HtmlBlockWidget extends WidgetType {
    * landed, so editing continues from the spot the eye was already on. Interactive
    * children (links, embeds, the fold triangle) keep their own behavior.
    */
+  /**
+   * Maps a clicked element back to a document position using the source line the
+   * renderer recorded on it. posAtCoords cannot help here: every line the widget
+   * covers is replaced, so there are no mapped coordinates inside it to hit.
+   */
+  private sourcePosFor(
+    target: EventTarget | null,
+    view: EditorView,
+    container: HTMLElement
+  ): number {
+    const fallback = view.posAtDOM(container);
+    if (!(target instanceof HTMLElement)) {
+      return fallback;
+    }
+    const tagged = target.closest(`[${SOURCE_LINE_ATTRIBUTE}]`);
+    const line = Number(tagged?.getAttribute(SOURCE_LINE_ATTRIBUTE));
+    if (!Number.isInteger(line) || line < 0 || line >= view.state.doc.lines) {
+      return fallback;
+    }
+    return view.state.doc.line(line + 1).from;
+  }
+
   private onMouseDown(event: MouseEvent, view: EditorView, container: HTMLElement): void {
     if (event.button !== 0) {
       return;
@@ -140,9 +168,7 @@ class HtmlBlockWidget extends WidgetType {
     if (target instanceof HTMLElement && target.closest(INTERACTIVE_SELECTOR) !== null) {
       return;
     }
-    // posAtCoords lands on the source line under the pointer; posAtDOM is the
-    // block's start, used when the click is not over any mapped position.
-    const pos = view.posAtCoords({ x: event.clientX, y: event.clientY }) ?? view.posAtDOM(container);
+    const pos = this.sourcePosFor(target, view, container);
     event.preventDefault();
     event.stopPropagation();
     view.dispatch({ selection: { anchor: pos }, scrollIntoView: false });
@@ -164,6 +190,7 @@ function buildDecorations(state: EditorState, host: LivePreviewHost): Decoration
     lastBuildReason = `editorLivePreviewField = ${String(livePreview)} (not Live Preview)`;
     return Decoration.none;
   }
+  currentTags = host.supportedTags;
   const lines = state.doc.toString().split("\n");
   const tree = BlockTree.build(lines, host.supportedTags);
   if (tree.length === 0) {
@@ -228,10 +255,63 @@ function addNodes(
 }
 
 /**
+ * Moves the caret into a rendered block instead of over it.
+ *
+ * CodeMirror skips a replaced block on vertical motion, because none of its lines
+ * are on screen to land on — so a block is unreachable except by arrowing sideways
+ * past its edge. Landing on its first (or last) line reveals the source, which is
+ * the only thing there is to edit.
+ */
+function stepIntoBlock(view: EditorView, forward: boolean): boolean {
+  const state = view.state;
+  if (state.field(editorLivePreviewField, false) !== true) {
+    return false;
+  }
+  const selection = state.selection.main;
+  if (!selection.empty) {
+    return false;
+  }
+  const lines = state.doc.toString().split("\n");
+  const tree = BlockTree.build(lines, currentTags);
+  if (tree.length === 0) {
+    return false;
+  }
+  const rendered = selectRenderedBlocks(tree, (startLine, endLine) =>
+    isBeingEdited(
+      state.selection.ranges,
+      state.doc.line(startLine + 1).from,
+      state.doc.line(endLine + 1).to
+    )
+  );
+  const cursorLine = state.doc.lineAt(selection.head).number - 1;
+  const target = forward ? blockBelow(rendered, cursorLine) : blockAbove(rendered, cursorLine);
+  if (target === null) {
+    return false;
+  }
+  // Enter at the near edge, so Down lands on the top and Up lands on the bottom.
+  const line = forward ? target.range.startLine : target.range.endLine;
+  view.dispatch({ selection: { anchor: state.doc.line(line + 1).from }, scrollIntoView: true });
+  return true;
+}
+
+/** The tag set of the most recent decoration build, for the keymap to reuse. */
+let currentTags: ReadonlySet<string> = new Set();
+
+/**
  * The decorations replace line breaks, so they must come from a state field:
  * CodeMirror refuses block decorations supplied by a view plugin, because it needs
  * them before it can estimate line heights.
  */
+/** Caret motion into rendered blocks; registered alongside the decoration field. */
+export function createBlockNavigationKeymap(): Extension {
+  return Prec.highest(
+    keymap.of([
+      { key: "ArrowDown", run: (view) => stepIntoBlock(view, true) },
+      { key: "ArrowUp", run: (view) => stepIntoBlock(view, false) },
+    ])
+  );
+}
+
 export function createLivePreviewExtension(host: LivePreviewHost): StateField<DecorationSet> {
   return StateField.define<DecorationSet>({
     create: (state) => buildDecorations(state, host),
