@@ -10,6 +10,7 @@ import {
   fillBlock,
   flushMath,
 } from "./ContainerRenderer";
+import { columnForRenderedPrefix } from "./SourceColumn";
 import { HtmlBlockParser } from "./HtmlBlockParser";
 
 /** What the extension needs from the plugin, kept narrow so this file stays testable in isolation. */
@@ -24,6 +25,56 @@ export interface LivePreviewHost {
 /** Clicking these must behave normally rather than dropping the cursor into the source. */
 const INTERACTIVE_SELECTOR =
   "a, button, input, textarea, select, summary, label, .internal-embed, .task-list-item-checkbox";
+
+/** The text node and offset under the pointer, across the DOM APIs Electron exposes. */
+function caretFromPoint(x: number, y: number): { node: Node; offset: number } | null {
+  const doc = document as Document & {
+    caretPositionFromPoint?: (x: number, y: number) => { offsetNode: Node; offset: number } | null;
+  };
+  const position = doc.caretPositionFromPoint?.(x, y);
+  if (position != null) {
+    return { node: position.offsetNode, offset: position.offset };
+  }
+  const range = doc.caretRangeFromPoint?.(x, y);
+  return range === null || range === undefined
+    ? null
+    : { node: range.startContainer, offset: range.startOffset };
+}
+
+/**
+ * The rendered text inside `element` that precedes the caret, and how many soft
+ * breaks it crossed.
+ *
+ * Walking the DOM rather than using `Range.toString()` is what makes the line count
+ * possible: a `<br>` contributes nothing to a range's text, but it is exactly where
+ * one source line ended and the next began.
+ */
+function renderedPrefixWithin(
+  element: Element,
+  node: Node,
+  offset: number
+): { prefix: string; lineBreaks: number } {
+  let prefix = "";
+  let lineBreaks = 0;
+  const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT | NodeFilter.SHOW_ELEMENT);
+  let current: Node | null = walker.currentNode;
+  while (current !== null) {
+    if (current === node) {
+      if (current.nodeType === Node.TEXT_NODE) {
+        prefix += (current.textContent ?? "").slice(0, offset);
+      }
+      break;
+    }
+    if (current.nodeType === Node.TEXT_NODE) {
+      prefix += current.textContent ?? "";
+    } else if (current instanceof HTMLBRElement) {
+      prefix = "";
+      lineBreaks++;
+    }
+    current = walker.nextNode();
+  }
+  return { prefix, lineBreaks };
+}
 
 /**
  * Whether the click landed on something that handles its own clicks, searching only
@@ -157,25 +208,39 @@ class HtmlBlockWidget extends WidgetType {
    * children (links, embeds, the fold triangle) keep their own behavior.
    */
   /**
-   * Maps a clicked element back to a document position using the source line the
-   * renderer recorded on it. posAtCoords cannot help here: every line the widget
-   * covers is replaced, so there are no mapped coordinates inside it to hit.
+   * Maps a click back to a document position: the source line the renderer recorded
+   * on the clicked element, plus the column the rendered text before the pointer
+   * traces to. posAtCoords cannot help here — every line the widget covers is
+   * replaced, so there are no mapped coordinates inside it to hit.
    */
   private sourcePosFor(
-    target: EventTarget | null,
+    event: MouseEvent,
     view: EditorView,
     container: HTMLElement
   ): number {
     const fallback = view.posAtDOM(container);
+    const target = event.target;
     if (!(target instanceof HTMLElement)) {
       return fallback;
     }
     const tagged = target.closest(`[${SOURCE_LINE_ATTRIBUTE}]`);
-    const line = Number(tagged?.getAttribute(SOURCE_LINE_ATTRIBUTE));
-    if (!Number.isInteger(line) || line < 0 || line >= view.state.doc.lines) {
+    const tagLine = Number(tagged?.getAttribute(SOURCE_LINE_ATTRIBUTE));
+    if (tagged === null || !Number.isInteger(tagLine) || tagLine < 0) {
       return fallback;
     }
-    return view.state.doc.line(line + 1).from;
+
+    const caret = caretFromPoint(event.clientX, event.clientY);
+    const placement =
+      caret === null ? null : renderedPrefixWithin(tagged, caret.node, caret.offset);
+    // A soft break inside one rendered element is a real newline in the source, so
+    // the breaks before the pointer say which of the element's lines was clicked.
+    const line = tagLine + (placement?.lineBreaks ?? 0);
+    if (line >= view.state.doc.lines) {
+      return fallback;
+    }
+    const docLine = view.state.doc.line(line + 1);
+    const column = columnForRenderedPrefix(docLine.text, placement?.prefix ?? "");
+    return docLine.from + Math.min(column, docLine.length);
   }
 
   private onMouseDown(event: MouseEvent, view: EditorView, container: HTMLElement): void {
@@ -186,7 +251,7 @@ class HtmlBlockWidget extends WidgetType {
     if (target instanceof HTMLElement && isInteractiveWithin(target, container)) {
       return;
     }
-    const pos = this.sourcePosFor(target, view, container);
+    const pos = this.sourcePosFor(event, view, container);
     event.preventDefault();
     event.stopPropagation();
     view.dispatch({ selection: { anchor: pos }, scrollIntoView: false });

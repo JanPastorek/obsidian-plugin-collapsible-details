@@ -7,6 +7,7 @@ import {
 } from "obsidian";
 import { BlockTree, HtmlBlockNode } from "./BlockTree";
 import { HtmlBlockParser } from "./HtmlBlockParser";
+import { topLevelListItemLines } from "./SourceColumn";
 
 /**
  * Records which source line a rendered element came from, so a click on the output
@@ -134,12 +135,38 @@ function tagSourceLines(
     if (cursor < sliceLines.length) {
       line = fromLine + cursor;
     }
-    target.children[i].setAttribute(SOURCE_LINE_ATTRIBUTE, String(line));
+    const child = target.children[i];
+    child.setAttribute(SOURCE_LINE_ATTRIBUTE, String(line));
     // Advance past this block: consume until the next blank line.
+    const blockStart = cursor;
     while (cursor < sliceLines.length && sliceLines[cursor].trim() !== "") {
       cursor++;
     }
+    tagListItems(child, sliceLines.slice(blockStart, cursor), line);
   }
+}
+
+/**
+ * Gives each list item its own source line.
+ *
+ * Block granularity is not enough for a list: every bullet would resolve to the
+ * line the list starts on, so clicking the fifth entry of a CV section would put
+ * the caret on the first. Items and marker lines are matched in order; a
+ * continuation line carries no marker and is correctly passed over.
+ */
+function tagListItems(block: Element, blockLines: readonly string[], blockStartLine: number): void {
+  if (block.tagName !== "UL" && block.tagName !== "OL") {
+    return;
+  }
+  const itemLines = topLevelListItemLines(blockLines, blockStartLine);
+  const items = Array.from(block.children).filter((child) => child.tagName === "LI");
+  // Only when they agree can an item be trusted to be the one that line produced.
+  if (items.length !== itemLines.length) {
+    return;
+  }
+  items.forEach((item, index) => {
+    item.setAttribute(SOURCE_LINE_ATTRIBUTE, String(itemLines[index]));
+  });
 }
 
 async function renderNested(
