@@ -150,24 +150,33 @@ class HtmlBlockWidget extends WidgetType {
   }
 }
 
+/** Why the last build produced no decorations; surfaced by the diagnostics command. */
+export let lastBuildReason = "not built yet";
+
 function buildDecorations(state: EditorState, host: LivePreviewHost): DecorationSet {
   if (!host.enabled || !host.livePreviewEnabled) {
+    lastBuildReason = `disabled (enabled=${host.enabled}, livePreview=${host.livePreviewEnabled})`;
     return Decoration.none;
   }
   // Source mode must stay untouched; the field is absent outside Markdown editors.
-  if (state.field(editorLivePreviewField, false) !== true) {
+  const livePreview = state.field(editorLivePreviewField, false);
+  if (livePreview !== true) {
+    lastBuildReason = `editorLivePreviewField = ${String(livePreview)} (not Live Preview)`;
     return Decoration.none;
   }
   const lines = state.doc.toString().split("\n");
   const tree = BlockTree.build(lines, host.supportedTags);
   if (tree.length === 0) {
+    lastBuildReason = `no blocks found in ${lines.length} lines for tags [${[...host.supportedTags].join(", ")}]`;
     return Decoration.none;
   }
 
   const sourcePath = state.field(editorInfoField, false)?.file?.path ?? "";
   const builder = new RangeSetBuilder<Decoration>();
   addNodes(tree, state, lines, sourcePath, host, builder);
-  return builder.finish();
+  const result = builder.finish();
+  lastBuildReason = `built ${result.size} decoration(s) from ${tree.length} top-level block(s)`;
+  return result;
 }
 
 /**
@@ -223,7 +232,7 @@ function addNodes(
  * CodeMirror refuses block decorations supplied by a view plugin, because it needs
  * them before it can estimate line heights.
  */
-export function createLivePreviewExtension(host: LivePreviewHost): Extension {
+export function createLivePreviewExtension(host: LivePreviewHost): StateField<DecorationSet> {
   return StateField.define<DecorationSet>({
     create: (state) => buildDecorations(state, host),
     update: (value, transaction) => {

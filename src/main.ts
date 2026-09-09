@@ -9,8 +9,10 @@ import {
   finishRenderMath,
   loadMathJax,
 } from "obsidian";
-import { Extension } from "@codemirror/state";
+import { Extension, StateField } from "@codemirror/state";
+import { DecorationSet } from "@codemirror/view";
 import { createContainerElement, fillBlock, flushMath } from "./ContainerRenderer";
+import { writeDiagnostics } from "./Diagnostics";
 import { HtmlBlockParser } from "./HtmlBlockParser";
 import { LivePreviewHost, createLivePreviewExtension } from "./LivePreviewBlocks";
 import { HtmlBlockRange, HtmlBlockRangeScanner } from "./HtmlBlockRangeScanner";
@@ -73,6 +75,8 @@ export default class DetailsMarkdownPlugin extends Plugin implements LivePreview
    * editors, since an existing field keeps its decorations until it is replaced.
    */
   private readonly editorExtensions: Extension[] = [];
+  /** Kept so the diagnostics command can ask the live editor what it actually holds. */
+  private livePreviewField: StateField<DecorationSet> | null = null;
 
   // --- LivePreviewHost -------------------------------------------------------
   get supportedTags(): ReadonlySet<string> {
@@ -96,8 +100,17 @@ export default class DetailsMarkdownPlugin extends Plugin implements LivePreview
     );
     this.addSettingTab(new DetailsMarkdownSettingTab(this.app, this));
 
-    this.editorExtensions.push(createLivePreviewExtension(this));
+    this.livePreviewField = createLivePreviewExtension(this);
+    this.editorExtensions.push(this.livePreviewField);
     this.registerEditorExtension(this.editorExtensions);
+
+    this.addCommand({
+      id: "diagnostics",
+      name: "Write diagnostics for the current note",
+      callback: () => {
+        void writeDiagnostics(this.app, this.tagSet, { ...this.settings }, this.livePreviewField);
+      },
+    });
 
     this.registerMarkdownPostProcessor(async (el, ctx) => {
       if (!this.settings.enabled) {
@@ -138,7 +151,8 @@ export default class DetailsMarkdownPlugin extends Plugin implements LivePreview
   /** Replaces the live-preview state field so open editors rebuild their decorations. */
   private refreshEditorExtensions(): void {
     this.editorExtensions.length = 0;
-    this.editorExtensions.push(createLivePreviewExtension(this));
+    this.livePreviewField = createLivePreviewExtension(this);
+    this.editorExtensions.push(this.livePreviewField);
     this.app.workspace.updateOptions();
   }
 
