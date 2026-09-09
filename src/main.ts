@@ -9,7 +9,7 @@ import {
   finishRenderMath,
   loadMathJax,
 } from "obsidian";
-import { Extension, StateField } from "@codemirror/state";
+import { Extension, Prec, StateField } from "@codemirror/state";
 import { DecorationSet } from "@codemirror/view";
 import { createContainerElement, fillBlock, flushMath } from "./ContainerRenderer";
 import { writeDiagnostics } from "./Diagnostics";
@@ -101,7 +101,11 @@ export default class DetailsMarkdownPlugin extends Plugin implements LivePreview
     this.addSettingTab(new DetailsMarkdownSettingTab(this.app, this));
 
     this.livePreviewField = createLivePreviewExtension(this);
-    this.editorExtensions.push(this.livePreviewField);
+    // Prec.highest: Obsidian's own Live Preview renderer puts a replace decoration
+    // over the same HTML block and outranks a plainly registered extension, so its
+    // widget wins and ours is built but never shown. Raising precedence is what
+    // makes our decoration the one that renders.
+    this.editorExtensions.push(Prec.highest(this.livePreviewField));
     this.registerEditorExtension(this.editorExtensions);
 
     this.addCommand({
@@ -152,7 +156,7 @@ export default class DetailsMarkdownPlugin extends Plugin implements LivePreview
   private refreshEditorExtensions(): void {
     this.editorExtensions.length = 0;
     this.livePreviewField = createLivePreviewExtension(this);
-    this.editorExtensions.push(this.livePreviewField);
+    this.editorExtensions.push(Prec.highest(this.livePreviewField));
     this.app.workspace.updateOptions();
   }
 
