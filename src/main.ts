@@ -23,7 +23,7 @@ import { HtmlBlockRange, HtmlBlockRangeScanner } from "./HtmlBlockRangeScanner";
 import { SectionRoleClassifier } from "./SectionRoleClassifier";
 import { SupportedTags } from "./SupportedTags";
 
-interface DetailsMarkdownSettings {
+interface HtmlBlockMarkdownSettings {
   enabled: boolean;
   /** Comma-separated container tags whose bodies render as Markdown. */
   supportedTags: string;
@@ -33,7 +33,7 @@ interface DetailsMarkdownSettings {
   enableLivePreview: boolean;
 }
 
-const DEFAULT_SETTINGS: DetailsMarkdownSettings = {
+const DEFAULT_SETTINGS: HtmlBlockMarkdownSettings = {
   enabled: true,
   supportedTags: "details, div, section, aside, article, figure, center",
   renderMath: true,
@@ -41,9 +41,9 @@ const DEFAULT_SETTINGS: DetailsMarkdownSettings = {
 };
 
 /** Marks a container element whose body we already replaced, so re-runs never double-render. */
-const RENDERED_ATTRIBUTE = "data-details-markdown-rendered";
+const RENDERED_ATTRIBUTE = "data-html-block-markdown-rendered";
 /** Hides escaped fragment sections (styles.css); removed by unhide/reconcile. */
-const HIDDEN_FRAGMENT_CLASS = "details-markdown-hidden-fragment";
+const HIDDEN_FRAGMENT_CLASS = "html-block-markdown-hidden-fragment";
 /** Bounded retries for the post-render fragment sweep, which must wait for DOM attach. */
 const FRAGMENT_SWEEP_MAX_TRIES = 10;
 
@@ -68,8 +68,8 @@ interface PathBlocks {
   hidden: HiddenFragmentEntry[];
 }
 
-export default class DetailsMarkdownPlugin extends Plugin implements LivePreviewHost {
-  settings: DetailsMarkdownSettings = DEFAULT_SETTINGS;
+export default class HtmlBlockMarkdownPlugin extends Plugin implements LivePreviewHost {
+  settings: HtmlBlockMarkdownSettings = DEFAULT_SETTINGS;
   private readonly blocksByPath = new Map<string, PathBlocks>();
   /** Cached parse of `settings.supportedTags`; rebuilt whenever the setting changes. */
   private tagSet: ReadonlySet<string> = SupportedTags.parse(DEFAULT_SETTINGS.supportedTags);
@@ -100,9 +100,9 @@ export default class DetailsMarkdownPlugin extends Plugin implements LivePreview
     await this.loadSettings();
     // Idempotent; ensures MathJax is present before the first body render needs it.
     loadMathJax().catch((error) =>
-      console.error("details-markdown: failed to load MathJax", error)
+      console.error("html-block-markdown: failed to load MathJax", error)
     );
-    this.addSettingTab(new DetailsMarkdownSettingTab(this.app, this));
+    this.addSettingTab(new HtmlBlockMarkdownSettingTab(this.app, this));
 
     this.livePreviewField = createLivePreviewExtension(this);
     // Prec.highest: Obsidian's own Live Preview renderer puts a replace decoration
@@ -128,7 +128,7 @@ export default class DetailsMarkdownPlugin extends Plugin implements LivePreview
         await this.processSection(el, ctx);
       } catch (error) {
         // Never throw into Obsidian's render loop; the section stays native.
-        console.error("details-markdown: failed to process section", error);
+        console.error("html-block-markdown: failed to process section", error);
       }
     });
   }
@@ -288,7 +288,7 @@ export default class DetailsMarkdownPlugin extends Plugin implements LivePreview
         }
         this.sweepSiblingFragments(sectionEl, ctx);
       } catch (error) {
-        console.error("details-markdown: fragment sweep failed", error);
+        console.error("html-block-markdown: fragment sweep failed", error);
       }
     });
   }
@@ -516,8 +516,8 @@ export default class DetailsMarkdownPlugin extends Plugin implements LivePreview
   }
 }
 
-class DetailsMarkdownSettingTab extends PluginSettingTab {
-  constructor(app: App, private readonly plugin: DetailsMarkdownPlugin) {
+class HtmlBlockMarkdownSettingTab extends PluginSettingTab {
+  constructor(app: App, private readonly plugin: HtmlBlockMarkdownPlugin) {
     super(app, plugin);
   }
 

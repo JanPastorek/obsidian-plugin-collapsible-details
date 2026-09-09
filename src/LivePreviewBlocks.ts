@@ -132,7 +132,7 @@ class HtmlBlockWidget extends WidgetType {
 
   toDOM(view: EditorView): HTMLElement {
     const container = this.createContainer();
-    container.addClass("details-markdown-lp");
+    container.addClass("html-block-markdown-lp");
     const component = new Component();
     this.component = component;
     component.load();
@@ -195,7 +195,7 @@ class HtmlBlockWidget extends WidgetType {
       );
       await flushMath(this.host.renderMath);
     } catch (error) {
-      console.error("details-markdown: failed to render block in Live Preview", error);
+      console.error("html-block-markdown: failed to render block in Live Preview", error);
     }
     // The body's height is only known after rendering; without this the editor keeps
     // its pre-render estimate and the text below sits at the wrong offset.

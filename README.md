@@ -1,4 +1,4 @@
-# Details Markdown
+# HTML Block Markdown
 
 An Obsidian plugin that renders Markdown — and LaTeX math — inside native HTML
 container blocks such as
@@ -9,9 +9,14 @@ such a block show as literal text. This plugin fixes that: the body renders as r
 Markdown, visually identical to the same content written outside the block, and the
 container keeps its own tag, classes and inline styles.
 
-> **Scope:** Rendering happens in **Reading view**. Live Preview (the editor) is not
-> yet supported — there, the block shows Obsidian's native output. Support for Live
-> Preview is planned for a future release.
+Rendering works in both **Reading view** and **Live Preview**. In the editor a block
+renders in place; put the cursor inside it — by clicking it, or by arrowing into it —
+and it reveals its source for editing, then renders again when you leave. Clicking
+lands the cursor on the line you clicked, not the top of the block.
+
+Containers nest: a styling `<div>` wrapped around a whole note does not stop the
+containers inside it from rendering, and editing one section leaves the rest
+rendered.
 
 ## Supported block shape
 
@@ -72,16 +77,18 @@ safe to edit character by character. `summary` is reserved (it belongs to a
 
 ## Installation
 
-### From the Community Plugins directory
-
-Settings → Community plugins → Browse → search for "Details Markdown" → Install →
-Enable.
-
 ### Manual
 
-Copy `manifest.json`, `main.js`, and `styles.css` into
-`<vault>/.obsidian/plugins/details-markdown/`, then enable the plugin in
+Download `manifest.json`, `main.js` and `styles.css` from the
+[latest release](https://github.com/JanPastorek/obsidian-plugin-collapsible-details/releases/latest)
+into `<vault>/.obsidian/plugins/html-block-markdown/`, then enable the plugin in
 Settings → Community plugins.
+
+### With BRAT
+
+Add `JanPastorek/obsidian-plugin-collapsible-details` as a beta plugin in
+[BRAT](https://github.com/TfTHacker/obsidian42-brat) to install and stay updated
+before this is in the community directory.
 
 ## Development
 
@@ -92,7 +99,7 @@ npm run build   # typecheck + bundle -> main.js
 npm run dev     # watch mode
 ```
 
-Manual acceptance tests: `test-vault-notes/Details Markdown Acceptance.md`.
+Manual acceptance tests: `test-vault-notes/HTML Block Markdown Acceptance.md`.
 
 ### How it works
 
@@ -116,6 +123,14 @@ re-assembles blocks from **raw source** (never from rendered DOM):
   the note, so nothing leaks when the note closes. A registry reconciles edits:
   interior edits re-render the body in place; deleting a block boundary restores
   native output.
+
+## Credits
+
+A fork of [details-markdown](https://github.com/nickolay-kondratyev) by Nickolay
+Kondratyev, which established the Reading-view approach this builds on: re-assembling
+a block from raw source rather than from rendered DOM. This fork generalizes it from
+`<details>` to any configured container tag, adds nesting, LaTeX math, and Live
+Preview. Both copyrights are retained in the licence.
 
 ## License
 

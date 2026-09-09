@@ -1,7 +1,7 @@
 {
-  "name": "details-markdown",
-  "version": "0.6.0",
-  "description": "Obsidian plugin: render Markdown and LaTeX math inside native HTML container blocks in Reading view.",
+  "name": "html-block-markdown",
+  "version": "1.0.0",
+  "description": "Obsidian plugin: render Markdown and LaTeX math inside native HTML container blocks, in Reading view and Live Preview.",
   "main": "main.js",
   "scripts": {
     "dev": "node esbuild.config.mjs",
@@ -18,7 +18,7 @@
     "mathjax",
     "latex"
   ],
-  "author": "Nickolay Kondratyev",
+  "author": "Jan Pastorek",
   "license": "MIT",
   "devDependencies": {
     "@types/node": "^20.11.0",

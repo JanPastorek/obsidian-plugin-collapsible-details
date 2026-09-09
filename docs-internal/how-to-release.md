@@ -1,4 +1,4 @@
-# How to release & submit "Details Markdown"
+# How to release & submit "HTML Block Markdown"
 
 Internal maintainer notes. Not part of the published plugin.
 

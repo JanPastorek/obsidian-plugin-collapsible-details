@@ -1,4 +1,4 @@
-# Details Markdown — acceptance tests
+# HTML Block Markdown — acceptance tests
 
 Copy this note (and a note named `Target Note` containing any content) into a vault
 with the plugin installed. Phase 1: verify in Reading mode.

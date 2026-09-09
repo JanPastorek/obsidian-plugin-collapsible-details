@@ -14,7 +14,7 @@ import { topLevelListItemLines } from "./SourceColumn";
  * can put the caret back on the line that produced it. Without it the only thing a
  * click could do is jump to the start of the whole block.
  */
-export const SOURCE_LINE_ATTRIBUTE = "data-details-markdown-line";
+export const SOURCE_LINE_ATTRIBUTE = "data-html-block-markdown-line";
 
 /** Everything a render pass needs, so this module stays independent of both views. */
 export interface RenderContext {
@@ -60,7 +60,7 @@ export async function fillBlock(
   // Every other container is filled directly, so the author's own layout CSS
   // (flex, grid, `figure > figcaption`) still applies to the real children.
   const bodyTarget =
-    parsed.tag === "details" ? element.createDiv({ cls: "details-markdown-body" }) : element;
+    parsed.tag === "details" ? element.createDiv({ cls: "html-block-markdown-body" }) : element;
   await renderBody(context, bodyLines, bodyTarget, blockStartLine + bodyOffset);
   return true;
 }
@@ -210,7 +210,7 @@ export function createContainerElement(openTag: string, tag: string): HTMLElemen
       return element;
     }
   } catch (error) {
-    console.error("details-markdown: failed to rebuild container tag", error);
+    console.error("html-block-markdown: failed to rebuild container tag", error);
   }
   return document.createElement(tag);
 }
@@ -219,7 +219,7 @@ function appendSanitized(target: HTMLElement, html: string): void {
   try {
     target.appendChild(sanitizeHTMLToDom(html));
   } catch (error) {
-    console.error("details-markdown: failed to sanitize summary", error);
+    console.error("html-block-markdown: failed to sanitize summary", error);
   }
 }
 
@@ -231,6 +231,6 @@ export async function flushMath(renderMath: boolean): Promise<void> {
   try {
     await finishRenderMath();
   } catch (error) {
-    console.error("details-markdown: failed to finish math rendering", error);
+    console.error("html-block-markdown: failed to finish math rendering", error);
   }
 }

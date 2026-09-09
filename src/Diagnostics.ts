@@ -6,7 +6,7 @@ import { createContainerElement, fillBlock } from "./ContainerRenderer";
 import { HtmlBlockParser } from "./HtmlBlockParser";
 import { lastBuildReason } from "./LivePreviewBlocks";
 
-const REPORT_PATH = "details-markdown-diagnostics.md";
+const REPORT_PATH = "html-block-markdown-diagnostics.md";
 
 /**
  * Writes what the plugin actually sees for the active note into a vault note.
@@ -24,14 +24,14 @@ export async function writeDiagnostics(
 ): Promise<void> {
   const view = app.workspace.getActiveViewOfType(MarkdownView);
   if (view === null) {
-    new Notice("Details Markdown: open a note first.");
+    new Notice("HTML Block Markdown: open a note first.");
     return;
   }
 
   const lines = view.editor.getValue().split("\n");
   const tree = BlockTree.build(lines, supportedTags);
   const report: string[] = [
-    "# Details Markdown diagnostics",
+    "# HTML Block Markdown diagnostics",
     "",
     `- note: \`${view.file?.path ?? "(none)"}\``,
     `- view mode: **${view.getMode()}**`,
@@ -76,7 +76,7 @@ export async function writeDiagnostics(
   }
 
   await write(app, report.join("\n"));
-  new Notice(`Details Markdown: wrote ${REPORT_PATH}`);
+  new Notice(`HTML Block Markdown: wrote ${REPORT_PATH}`);
 }
 
 function describe(

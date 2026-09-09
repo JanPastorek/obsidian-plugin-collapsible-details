@@ -1,4 +1,4 @@
-# Requirements: Obsidian "Details Markdown" plugin
+# Requirements: Obsidian "HTML Block Markdown" plugin
 
 ## Objective
 
