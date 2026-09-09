@@ -23,7 +23,25 @@ export interface LivePreviewHost {
 
 /** Clicking these must behave normally rather than dropping the cursor into the source. */
 const INTERACTIVE_SELECTOR =
-  "a, button, input, textarea, select, summary, label, .internal-embed, .task-list-item-checkbox, [contenteditable]";
+  "a, button, input, textarea, select, summary, label, .internal-embed, .task-list-item-checkbox";
+
+/**
+ * Whether the click landed on something that handles its own clicks, searching only
+ * inside the widget.
+ *
+ * `closest` walks the whole ancestor chain, so a selector matching anything on the
+ * editor *around* the widget vetoes every click inside it — which is what
+ * `[contenteditable]` did, since the editor's content element carries it. Stopping
+ * at the widget root keeps the test about what was actually clicked.
+ */
+function isInteractiveWithin(target: HTMLElement, container: HTMLElement): boolean {
+  for (let el: HTMLElement | null = target; el !== null && el !== container; el = el.parentElement) {
+    if (el.matches(INTERACTIVE_SELECTOR)) {
+      return true;
+    }
+  }
+  return false;
+}
 
 /**
  * Renders one container block in place of its source lines.
@@ -165,7 +183,7 @@ class HtmlBlockWidget extends WidgetType {
       return;
     }
     const target = event.target;
-    if (target instanceof HTMLElement && target.closest(INTERACTIVE_SELECTOR) !== null) {
+    if (target instanceof HTMLElement && isInteractiveWithin(target, container)) {
       return;
     }
     const pos = this.sourcePosFor(target, view, container);
