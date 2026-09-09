@@ -4,6 +4,12 @@ import { HtmlTagPatterns } from "./HtmlTagPatterns";
 export interface ParsedHtmlBlock {
   /** Lowercased container tag name, e.g. `details` or `div`. */
   readonly tag: string;
+  /**
+   * The opening tag exactly as written, attributes included (`<div class="card">`).
+   * Reading view reuses the element Obsidian already built, but Live Preview has to
+   * build its own, so it needs the original text to reproduce the attributes.
+   */
+  readonly openTag: string;
   /** Inner text of the single-line `<summary>` tag; only ever set for `details`. */
   readonly summaryText: string | null;
   /** Raw Markdown body between summary (or opening tag) and the close, joined by `\n`. */
@@ -60,6 +66,7 @@ export class HtmlBlockParser {
 
     return {
       tag: opening.tag,
+      openTag: lines[0].trimEnd(),
       summaryText: summaryMatch ? summaryMatch[1] : null,
       bodyMarkdown: bodyLines.join("\n"),
     };

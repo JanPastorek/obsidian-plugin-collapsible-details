@@ -174,6 +174,7 @@ describe("HtmlBlockParser.parse for non-details containers", () => {
     const parsed = parse(["<div>", "### Heading", "- item", "</div>"]);
     expect(parsed).toEqual({
       tag: "div",
+      openTag: "<div>",
       summaryText: null,
       bodyMarkdown: "### Heading\n- item",
     });
@@ -196,6 +197,11 @@ describe("HtmlBlockParser.parse for non-details containers", () => {
 
   it("THEN a container outside the configured set is rejected", () => {
     expect(parse(["<span>", "body", "</span>"])).toBeNull();
+  });
+
+  it("THEN the opening tag is reported verbatim, attributes included", () => {
+    const parsed = parse(['<section class="card" id="x">', "body", "</section>"]);
+    expect(parsed?.openTag).toBe('<section class="card" id="x">');
   });
 
   it("THEN a self-closing container is rejected", () => {

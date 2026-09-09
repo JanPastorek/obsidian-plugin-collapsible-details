@@ -10,7 +10,9 @@ import {
   finishRenderMath,
   loadMathJax,
 } from "obsidian";
+import { Extension } from "@codemirror/state";
 import { HtmlBlockParser } from "./HtmlBlockParser";
+import { LivePreviewHost, createLivePreviewExtension } from "./LivePreviewBlocks";
 import { HtmlBlockRange, HtmlBlockRangeScanner } from "./HtmlBlockRangeScanner";
 import { SectionRoleClassifier } from "./SectionRoleClassifier";
 import { SupportedTags } from "./SupportedTags";
@@ -21,12 +23,15 @@ interface DetailsMarkdownSettings {
   supportedTags: string;
   /** Flush MathJax after each body render so $...$ and $$...$$ typeset inside blocks. */
   renderMath: boolean;
+  /** Render blocks in the editor too, revealing source while the cursor is inside. */
+  enableLivePreview: boolean;
 }
 
 const DEFAULT_SETTINGS: DetailsMarkdownSettings = {
   enabled: true,
   supportedTags: "details, div, section, aside, article, figure, center",
   renderMath: true,
+  enableLivePreview: true,
 };
 
 /** Marks a container element whose body we already replaced, so re-runs never double-render. */
@@ -58,11 +63,31 @@ interface PathBlocks {
   hidden: HiddenFragmentEntry[];
 }
 
-export default class DetailsMarkdownPlugin extends Plugin {
+export default class DetailsMarkdownPlugin extends Plugin implements LivePreviewHost {
   settings: DetailsMarkdownSettings = DEFAULT_SETTINGS;
   private readonly blocksByPath = new Map<string, PathBlocks>();
   /** Cached parse of `settings.supportedTags`; rebuilt whenever the setting changes. */
   private tagSet: ReadonlySet<string> = SupportedTags.parse(DEFAULT_SETTINGS.supportedTags);
+  /**
+   * Registered once by reference and mutated in place: swapping in a fresh state field
+   * and calling `updateOptions` is what makes a settings change take effect in open
+   * editors, since an existing field keeps its decorations until it is replaced.
+   */
+  private readonly editorExtensions: Extension[] = [];
+
+  // --- LivePreviewHost -------------------------------------------------------
+  get supportedTags(): ReadonlySet<string> {
+    return this.tagSet;
+  }
+  get enabled(): boolean {
+    return this.settings.enabled;
+  }
+  get livePreviewEnabled(): boolean {
+    return this.settings.enableLivePreview;
+  }
+  get renderMath(): boolean {
+    return this.settings.renderMath;
+  }
 
   async onload(): Promise<void> {
     await this.loadSettings();
@@ -71,6 +96,9 @@ export default class DetailsMarkdownPlugin extends Plugin {
       console.error("details-markdown: failed to load MathJax", error)
     );
     this.addSettingTab(new DetailsMarkdownSettingTab(this.app, this));
+
+    this.editorExtensions.push(createLivePreviewExtension(this));
+    this.registerEditorExtension(this.editorExtensions);
 
     this.registerMarkdownPostProcessor(async (el, ctx) => {
       if (!this.settings.enabled) {
@@ -105,6 +133,14 @@ export default class DetailsMarkdownPlugin extends Plugin {
     this.tagSet = SupportedTags.parse(this.settings.supportedTags);
     this.blocksByPath.clear();
     this.rerenderOpenMarkdownViews();
+    this.refreshEditorExtensions();
+  }
+
+  /** Replaces the live-preview state field so open editors rebuild their decorations. */
+  private refreshEditorExtensions(): void {
+    this.editorExtensions.length = 0;
+    this.editorExtensions.push(createLivePreviewExtension(this));
+    this.app.workspace.updateOptions();
   }
 
   private rerenderOpenMarkdownViews(): void {
@@ -488,6 +524,20 @@ class DetailsMarkdownSettingTab extends PluginSettingTab {
             await this.plugin.saveSettings();
             this.plugin.onSettingsChanged();
           })
+      );
+
+    new Setting(this.containerEl)
+      .setName("Render in Live Preview")
+      .setDesc(
+        "Render blocks in the editor as well as Reading view. " +
+          "Put the cursor inside a block to edit its source; move it out to render again."
+      )
+      .addToggle((toggle) =>
+        toggle.setValue(this.plugin.settings.enableLivePreview).onChange(async (value) => {
+          this.plugin.settings.enableLivePreview = value;
+          await this.plugin.saveSettings();
+          this.plugin.onSettingsChanged();
+        })
       );
 
     new Setting(this.containerEl)
