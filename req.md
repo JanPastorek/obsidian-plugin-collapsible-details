@@ -17,7 +17,8 @@ Keep it simple and robust. This is a small, focused plugin, not a framework.
 Three phases, each independently shippable:
 
 - **Phase 1 (MVP): Reading mode.** The simple, robust core. **Done.**
-- **Phase 1.5: Blank-line bodies in Reading mode.** Support blank lines inside the body (multi-section re-assembly from raw source).
+- **Phase 1.5: Blank-line bodies in Reading mode.** Support blank lines inside the body (multi-section re-assembly from raw source). **Done.**
+- **Phase 1.6: Container tags and math in Reading mode.** Generalize the block from `<details>` to a configurable set of HTML container tags, and make LaTeX math typeset inside rendered bodies. **Done.**
 - **Phase 2: Live Preview (the editor).** The main reason the plugin exists, and the harder half. Build last; it assumes blank-line support from day one.
 
 Do not begin Phase 2 until Phase 1.5 meets its acceptance criteria.
@@ -60,10 +61,20 @@ blank lines allowed in the body (Phase 1.5)
 - **Idempotent.** Re-renders, scrolling, and cursor movement never double-render or stack duplicate content.
 - **Works on mobile** as well as desktop.
 
+## Phase 1.6 requirements
+
+10. Any tag in the configured "Container tags" list is treated as a block in exactly the same way as `<details>`: opening and closing tags on their own lines, attributes allowed, blank-line bodies re-assembled, fenced code ignored.
+11. The container's own attributes (`class`, `style`, `id`, `open`, `data-*`) survive rendering. The plugin reuses the element Obsidian created and replaces only its body, so the author's CSS keeps applying.
+12. `<summary>` is recognised only inside `<details>`. Inside any other container it is ordinary body content.
+13. The tag list is user-editable and never throws: invalid, reserved (`summary`), void (`br`, `hr`, ...) and duplicate entries are dropped silently, since the setting is edited character by character.
+14. LaTeX math inside a rendered body (`$...$` and `$$...$$`) typesets immediately, with no flash of raw source and no layout jump. A setting can turn this off.
+15. Reducing the tag list back to `details` restores native behavior for every other tag, with nothing left behind.
+
 ## Non-goals (do not build now)
 
 - Rendering Markdown inside the `<summary>` text itself.
-- Settings beyond the single on/off toggle.
+- Inline (not-on-their-own-line) container tags.
+- Re-processing a container nested inside another container's body.
 - Deep nested-`<details>` fidelity beyond "the outer block renders and nothing breaks".
 - PDF export / print edge cases.
 

@@ -7,30 +7,39 @@ import {
   Plugin,
   PluginSettingTab,
   Setting,
+  finishRenderMath,
+  loadMathJax,
 } from "obsidian";
-import { DetailsBlockParser } from "./DetailsBlockParser";
-import { DetailsRange, DetailsRangeScanner } from "./DetailsRangeScanner";
+import { HtmlBlockParser } from "./HtmlBlockParser";
+import { HtmlBlockRange, HtmlBlockRangeScanner } from "./HtmlBlockRangeScanner";
 import { SectionRoleClassifier } from "./SectionRoleClassifier";
+import { SupportedTags } from "./SupportedTags";
 
 interface DetailsMarkdownSettings {
   enabled: boolean;
+  /** Comma-separated container tags whose bodies render as Markdown. */
+  supportedTags: string;
+  /** Flush MathJax after each body render so $...$ and $$...$$ typeset inside blocks. */
+  renderMath: boolean;
 }
 
 const DEFAULT_SETTINGS: DetailsMarkdownSettings = {
   enabled: true,
+  supportedTags: "details, div, section, aside, article, figure, center",
+  renderMath: true,
 };
 
-/** Marks a <details> element whose body we already replaced, so re-runs never double-render. */
+/** Marks a container element whose body we already replaced, so re-runs never double-render. */
 const RENDERED_ATTRIBUTE = "data-details-markdown-rendered";
 /** Hides escaped fragment sections (styles.css); removed by unhide/reconcile. */
 const HIDDEN_FRAGMENT_CLASS = "details-markdown-hidden-fragment";
 /** Bounded retries for the post-render fragment sweep, which must wait for DOM attach. */
 const FRAGMENT_SWEEP_MAX_TRIES = 10;
 
-/** A <details> block whose body this plugin rendered; tracked to detect staleness and leaks. */
+/** A container block whose body this plugin rendered; tracked to detect staleness and leaks. */
 interface RenderedBlockEntry {
   sectionEl: HTMLElement;
-  detailsEl: HTMLElement;
+  blockEl: HTMLElement;
   bodyContainer: HTMLElement;
   lifecycleOwner: MarkdownRenderChild;
   renderedSource: string;
@@ -52,9 +61,15 @@ interface PathBlocks {
 export default class DetailsMarkdownPlugin extends Plugin {
   settings: DetailsMarkdownSettings = DEFAULT_SETTINGS;
   private readonly blocksByPath = new Map<string, PathBlocks>();
+  /** Cached parse of `settings.supportedTags`; rebuilt whenever the setting changes. */
+  private tagSet: ReadonlySet<string> = SupportedTags.parse(DEFAULT_SETTINGS.supportedTags);
 
   async onload(): Promise<void> {
     await this.loadSettings();
+    // Idempotent; ensures MathJax is present before the first body render needs it.
+    loadMathJax().catch((error) =>
+      console.error("details-markdown: failed to load MathJax", error)
+    );
     this.addSettingTab(new DetailsMarkdownSettingTab(this.app, this));
 
     this.registerMarkdownPostProcessor(async (el, ctx) => {
@@ -78,14 +93,16 @@ export default class DetailsMarkdownPlugin extends Plugin {
 
   async loadSettings(): Promise<void> {
     this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
+    this.tagSet = SupportedTags.parse(this.settings.supportedTags);
   }
 
   async saveSettings(): Promise<void> {
     await this.saveData(this.settings);
   }
 
-  /** Applies a settings toggle immediately: full re-render restores native or rendered state. */
-  onEnabledSettingChanged(): void {
+  /** Applies a settings change immediately: full re-render restores native or rendered state. */
+  onSettingsChanged(): void {
+    this.tagSet = SupportedTags.parse(this.settings.supportedTags);
     this.blocksByPath.clear();
     this.rerenderOpenMarkdownViews();
   }
@@ -122,7 +139,7 @@ export default class DetailsMarkdownPlugin extends Plugin {
       return;
     }
     const lines = sectionInfo.text.split("\n");
-    const ranges = DetailsRangeScanner.scan(sectionInfo.text);
+    const ranges = HtmlBlockRangeScanner.scan(sectionInfo.text, this.tagSet);
 
     await this.reconcileTrackedBlocks(ctx, ranges, lines);
 
@@ -138,33 +155,40 @@ export default class DetailsMarkdownPlugin extends Plugin {
   private async renderOpeningSection(
     sectionEl: HTMLElement,
     ctx: MarkdownPostProcessorContext,
-    range: DetailsRange,
+    range: HtmlBlockRange,
     lines: string[]
   ): Promise<void> {
-    const detailsEl = this.findSingleTopLevelDetails(sectionEl);
-    if (detailsEl === null || detailsEl.hasAttribute(RENDERED_ATTRIBUTE)) {
+    const blockEl = this.findSingleTopLevelBlock(sectionEl, range.tag);
+    if (blockEl === null || blockEl.hasAttribute(RENDERED_ATTRIBUTE)) {
       return;
     }
     const source = this.sliceRange(lines, range);
-    const parsed = DetailsBlockParser.parse(source);
+    const parsed = HtmlBlockParser.parse(source, this.tagSet);
     if (parsed === null || parsed.bodyMarkdown === "") {
       return;
     }
 
-    // Keep the native <summary> element (and the open attribute) untouched;
-    // replace only the (possibly truncated) literal body with a real Markdown render.
-    const summaryEl = detailsEl.querySelector(":scope > summary");
-    detailsEl.empty();
+    // Keep the element's own attributes (class, style, open, ...) by reusing it, and
+    // keep the native <summary> child untouched; replace only the (possibly truncated)
+    // literal body with a real Markdown render.
+    const summaryEl = blockEl.querySelector(":scope > summary");
+    blockEl.empty();
     if (summaryEl !== null) {
-      detailsEl.appendChild(summaryEl);
+      blockEl.appendChild(summaryEl);
     }
 
-    const bodyContainer = detailsEl.createDiv({ cls: "details-markdown-body" });
+    // <details> needs a wrapper so the body can be re-rendered without touching the
+    // <summary>. Other containers get their body rendered directly into the element,
+    // so the author's own layout CSS (flex/grid, figure > figcaption, ...) still applies.
+    const bodyContainer =
+      parsed.tag === "details"
+        ? blockEl.createDiv({ cls: "details-markdown-body" })
+        : blockEl;
     // MarkdownRenderChild ties embeds/Dataview/etc. in the body to the note's
     // lifecycle via ctx.addChild, so everything unloads when the note closes.
     const lifecycleOwner = new MarkdownRenderChild(bodyContainer);
     ctx.addChild(lifecycleOwner);
-    detailsEl.setAttribute(RENDERED_ATTRIBUTE, "true");
+    blockEl.setAttribute(RENDERED_ATTRIBUTE, "true");
 
     await MarkdownRenderer.render(
       this.app,
@@ -173,10 +197,11 @@ export default class DetailsMarkdownPlugin extends Plugin {
       ctx.sourcePath,
       lifecycleOwner
     );
+    await this.flushMath();
 
     this.pathBlocks(ctx.sourcePath).rendered.push({
       sectionEl,
-      detailsEl,
+      blockEl,
       bodyContainer,
       lifecycleOwner,
       renderedSource: source,
@@ -195,7 +220,7 @@ export default class DetailsMarkdownPlugin extends Plugin {
   private hideFragmentIfBlockRendered(
     el: HTMLElement,
     ctx: MarkdownPostProcessorContext,
-    range: DetailsRange
+    range: HtmlBlockRange
   ): void {
     const opening = this.findRenderedOpening(ctx, ctx.sourcePath, range.startLine);
     if (opening === null) {
@@ -236,7 +261,7 @@ export default class DetailsMarkdownPlugin extends Plugin {
     if (openingInfo === null || parent === null) {
       return;
     }
-    const ranges = DetailsRangeScanner.scan(openingInfo.text);
+    const ranges = HtmlBlockRangeScanner.scan(openingInfo.text, this.tagSet);
     for (const sibling of Array.from(parent.children)) {
       if (
         sibling === sectionEl ||
@@ -262,7 +287,7 @@ export default class DetailsMarkdownPlugin extends Plugin {
 
   private async reconcileTrackedBlocks(
     ctx: MarkdownPostProcessorContext,
-    ranges: DetailsRange[],
+    ranges: HtmlBlockRange[],
     lines: string[]
   ): Promise<void> {
     const path = ctx.sourcePath;
@@ -322,7 +347,7 @@ export default class DetailsMarkdownPlugin extends Plugin {
     source: string,
     ctx: MarkdownPostProcessorContext
   ): Promise<void> {
-    const parsed = DetailsBlockParser.parse(source);
+    const parsed = HtmlBlockParser.parse(source, this.tagSet);
     if (parsed === null || parsed.bodyMarkdown === "") {
       this.remove(this.pathBlocks(ctx.sourcePath).rendered, entry);
       this.rerenderViewsForPath(ctx.sourcePath);
@@ -342,6 +367,7 @@ export default class DetailsMarkdownPlugin extends Plugin {
       ctx.sourcePath,
       lifecycleOwner
     );
+    await this.flushMath();
   }
 
   // ---------------------------------------------------------------------------
@@ -368,17 +394,45 @@ export default class DetailsMarkdownPlugin extends Plugin {
   }
 
   /**
-   * Returns the section's <details> element only when the section contains exactly
-   * one top-level <details>; otherwise the section is not a supported opening.
+   * Returns the section's container element only when the section contains exactly
+   * one top-level element of `tag`; otherwise the section is not a supported opening.
+   * "Top-level" is judged within the section, so an unrelated wrapper outside it
+   * (e.g. another note's fold in an embed) can never suppress a match.
    */
-  private findSingleTopLevelDetails(el: HTMLElement): HTMLElement | null {
-    const topLevel = Array.from(el.querySelectorAll("details")).filter(
-      (d) => d.parentElement?.closest("details") === null
+  private findSingleTopLevelBlock(el: HTMLElement, tag: string): HTMLElement | null {
+    // Safe as a selector: SupportedTags only admits /^[a-z][a-z0-9-]*$/ names.
+    const topLevel = Array.from(el.querySelectorAll<HTMLElement>(tag)).filter(
+      (candidate) => !this.hasSupportedAncestorWithin(candidate, el)
     );
     return topLevel.length === 1 ? topLevel[0] : null;
   }
 
-  private sliceRange(lines: string[], range: DetailsRange): string {
+  private hasSupportedAncestorWithin(el: HTMLElement, boundary: HTMLElement): boolean {
+    for (let parent = el.parentElement; parent !== null && parent !== boundary; ) {
+      if (this.tagSet.has(parent.tagName.toLowerCase())) {
+        return true;
+      }
+      parent = parent.parentElement;
+    }
+    return false;
+  }
+
+  /**
+   * Flushes MathJax so `$...$` and `$$...$$` inside a freshly rendered body are
+   * typeset immediately rather than on some later unrelated render.
+   */
+  private async flushMath(): Promise<void> {
+    if (!this.settings.renderMath) {
+      return;
+    }
+    try {
+      await finishRenderMath();
+    } catch (error) {
+      console.error("details-markdown: failed to finish math rendering", error);
+    }
+  }
+
+  private sliceRange(lines: string[], range: HtmlBlockRange): string {
     return lines.slice(range.startLine, range.endLine + 1).join("\n");
   }
 
@@ -406,14 +460,47 @@ class DetailsMarkdownSettingTab extends PluginSettingTab {
 
   display(): void {
     this.containerEl.empty();
+
     new Setting(this.containerEl)
-      .setName("Render Markdown inside <details> blocks")
+      .setName("Render Markdown inside HTML container blocks")
       .setDesc("When off, Obsidian's native (literal) behavior is restored.")
       .addToggle((toggle) =>
         toggle.setValue(this.plugin.settings.enabled).onChange(async (value) => {
           this.plugin.settings.enabled = value;
           await this.plugin.saveSettings();
-          this.plugin.onEnabledSettingChanged();
+          this.plugin.onSettingsChanged();
+        })
+      );
+
+    new Setting(this.containerEl)
+      .setName("Container tags")
+      .setDesc(
+        "Comma-separated HTML tags whose bodies render as Markdown. " +
+          "Each tag must sit alone on its line, with a matching closing tag. " +
+          "Set to just \u201cdetails\u201d to restrict the plugin to folds."
+      )
+      .addText((text) =>
+        text
+          .setPlaceholder(DEFAULT_SETTINGS.supportedTags)
+          .setValue(this.plugin.settings.supportedTags)
+          .onChange(async (value) => {
+            this.plugin.settings.supportedTags = value;
+            await this.plugin.saveSettings();
+            this.plugin.onSettingsChanged();
+          })
+      );
+
+    new Setting(this.containerEl)
+      .setName("Render LaTeX math")
+      .setDesc(
+        "Typeset $...$ and $$...$$ inside rendered bodies. " +
+          "Turn off only if math elsewhere in the note misbehaves."
+      )
+      .addToggle((toggle) =>
+        toggle.setValue(this.plugin.settings.renderMath).onChange(async (value) => {
+          this.plugin.settings.renderMath = value;
+          await this.plugin.saveSettings();
+          this.plugin.onSettingsChanged();
         })
       );
   }

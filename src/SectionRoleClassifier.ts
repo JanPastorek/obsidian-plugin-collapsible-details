@@ -1,9 +1,9 @@
-import { DetailsRange } from "./DetailsRangeScanner";
+import { HtmlBlockRange } from "./HtmlBlockRangeScanner";
 
-/** How a rendered section relates to the scanned `<details>` block ranges. */
+/** How a rendered section relates to the scanned container block ranges. */
 export type SectionRole =
-  | { kind: "opening"; range: DetailsRange }
-  | { kind: "fragment"; range: DetailsRange }
+  | { kind: "opening"; range: HtmlBlockRange }
+  | { kind: "fragment"; range: HtmlBlockRange }
   | { kind: "none" };
 
 /**
@@ -15,7 +15,7 @@ export type SectionRole =
  */
 export class SectionRoleClassifier {
   static classify(
-    ranges: readonly DetailsRange[],
+    ranges: readonly HtmlBlockRange[],
     lineStart: number,
     lineEnd: number
   ): SectionRole {

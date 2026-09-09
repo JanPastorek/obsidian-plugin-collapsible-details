@@ -97,3 +97,84 @@ NOT hidden.
 this block never closes
 
 This trailing paragraph must stay visible.
+
+## Test 10 — Markdown inside a `<div>` (multi-tag)
+
+Expected: the heading and list render as Markdown, and the div keeps its border and
+padding (attributes are preserved, not stripped).
+
+<div class="acceptance-card" style="border: 1px solid var(--interactive-accent); border-radius: 6px; padding: 12px">
+
+### Rendered inside a div
+- bullet one
+- bullet two
+
+</div>
+
+## Test 11 — other container tags
+
+Expected: both render as Markdown. If you removed a tag from the "Container tags"
+setting, that block should fall back to literal native output instead.
+
+<section>
+### Rendered inside a section
+Some **bold** text.
+</section>
+
+<aside>
+### Rendered inside an aside
+[[Target Note]]
+</aside>
+
+## Test 12 — LaTeX math
+
+Expected: all three typeset immediately on opening the note, with no flash of raw
+`$...$` and no layout jump.
+
+<details open>
+<summary>Test 12: math in the summary is NOT rendered (out of scope): $E = mc^2$</summary>
+Inline math in the body: $f(x) = \sin(x)$, and $e^{i\pi} + 1 = 0$.
+
+$$
+\sum_{n=1}^{\infty} \frac{1}{n^2} = \frac{\pi^2}{6}
+$$
+</details>
+
+<div>
+
+$$
+\begin{pmatrix} a & b \\ c & d \end{pmatrix}^{-1} = \frac{1}{ad-bc}\begin{pmatrix} d & -b \\ -c & a \end{pmatrix}
+$$
+
+</div>
+
+## Test 13 — tags that must be left alone
+
+Expected: all three render natively (literal), because they are not supported blocks.
+
+<span>
+### Not a configured container tag
+</span>
+
+<div />
+### Self-closing: opens no block
+</div>
+
+<div>
+### Unclosed: no matching close, so left native
+
+## Test 14 — container tags inside a code fence
+
+Expected: shown as literal code, not treated as a block.
+
+```html
+<div>
+### not a real block
+</div>
+```
+
+## Test 15 — turning off a tag
+
+Set "Container tags" to just `details`, then re-read this note. Expected: Tests 10,
+11 and the `<div>` in Test 12 revert to native literal output with nothing left
+behind; Tests 1–9 still pass.
