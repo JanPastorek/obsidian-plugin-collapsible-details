@@ -62,7 +62,9 @@ class HtmlBlockWidget extends WidgetType {
     this.component = component;
     component.load();
     void this.renderInto(container, component, view);
-    container.addEventListener("click", (event) => this.onClick(event, view, container));
+    // mousedown, not click: CodeMirror settles the selection on mousedown, so a
+    // selection dispatched from a later click event is immediately overwritten.
+    container.addEventListener("mousedown", (event) => this.onMouseDown(event, view, container));
     return container;
   }
 
@@ -71,9 +73,21 @@ class HtmlBlockWidget extends WidgetType {
     this.component = null;
   }
 
-  /** Let every event through: link clicks, fold toggles and our own handler all need it. */
+  /**
+   * Keep CodeMirror out of events inside the widget: link clicks, fold toggles and
+   * our own cursor placement all need to happen without it selecting the widget.
+   */
   ignoreEvent(): boolean {
     return true;
+  }
+
+  /**
+   * A block widget is not editable, so arrowing into it would otherwise stall.
+   * Reporting a coordinate map lets CodeMirror place the cursor before or after the
+   * block as the caret passes it.
+   */
+  get estimatedHeight(): number {
+    return -1;
   }
 
   /**
@@ -114,17 +128,24 @@ class HtmlBlockWidget extends WidgetType {
   }
 
   /**
-   * Clicking the rendered block puts the cursor at its first line, which is what
-   * reveals the source for editing. Interactive children keep their own behavior.
+   * Clicking the rendered block reveals its source with the cursor where the click
+   * landed, so editing continues from the spot the eye was already on. Interactive
+   * children (links, embeds, the fold triangle) keep their own behavior.
    */
-  private onClick(event: MouseEvent, view: EditorView, container: HTMLElement): void {
+  private onMouseDown(event: MouseEvent, view: EditorView, container: HTMLElement): void {
+    if (event.button !== 0) {
+      return;
+    }
     const target = event.target;
     if (target instanceof HTMLElement && target.closest(INTERACTIVE_SELECTOR) !== null) {
       return;
     }
-    const pos = view.posAtDOM(container);
+    // posAtCoords lands on the source line under the pointer; posAtDOM is the
+    // block's start, used when the click is not over any mapped position.
+    const pos = view.posAtCoords({ x: event.clientX, y: event.clientY }) ?? view.posAtDOM(container);
     event.preventDefault();
-    view.dispatch({ selection: { anchor: pos } });
+    event.stopPropagation();
+    view.dispatch({ selection: { anchor: pos }, scrollIntoView: false });
     view.focus();
   }
 }
