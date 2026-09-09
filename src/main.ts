@@ -2,7 +2,6 @@ import {
   App,
   MarkdownPostProcessorContext,
   MarkdownRenderChild,
-  MarkdownRenderer,
   MarkdownView,
   Plugin,
   PluginSettingTab,
@@ -11,6 +10,7 @@ import {
   loadMathJax,
 } from "obsidian";
 import { Extension } from "@codemirror/state";
+import { createContainerElement, fillBlock, flushMath } from "./ContainerRenderer";
 import { HtmlBlockParser } from "./HtmlBlockParser";
 import { LivePreviewHost, createLivePreviewExtension } from "./LivePreviewBlocks";
 import { HtmlBlockRange, HtmlBlockRangeScanner } from "./HtmlBlockRangeScanner";
@@ -45,7 +45,6 @@ const FRAGMENT_SWEEP_MAX_TRIES = 10;
 interface RenderedBlockEntry {
   sectionEl: HTMLElement;
   blockEl: HTMLElement;
-  bodyContainer: HTMLElement;
   lifecycleOwner: MarkdownRenderChild;
   renderedSource: string;
   /** Sections render detached and attach later; only ever-connected elements can be pronounced dead. */
@@ -194,51 +193,35 @@ export default class DetailsMarkdownPlugin extends Plugin implements LivePreview
     range: HtmlBlockRange,
     lines: string[]
   ): Promise<void> {
-    const blockEl = this.findSingleTopLevelBlock(sectionEl, range.tag);
-    if (blockEl === null || blockEl.hasAttribute(RENDERED_ATTRIBUTE)) {
-      return;
-    }
     const source = this.sliceRange(lines, range);
+    const sourceLines = lines.slice(range.startLine, range.endLine + 1);
     const parsed = HtmlBlockParser.parse(source, this.tagSet);
     if (parsed === null || parsed.bodyMarkdown === "") {
       return;
     }
-
-    // Keep the element's own attributes (class, style, open, ...) by reusing it, and
-    // keep the native <summary> child untouched; replace only the (possibly truncated)
-    // literal body with a real Markdown render.
-    const summaryEl = blockEl.querySelector(":scope > summary");
-    blockEl.empty();
-    if (summaryEl !== null) {
-      blockEl.appendChild(summaryEl);
+    const blockEl = this.resolveBlockElement(sectionEl, parsed.tag, parsed.openTag);
+    if (blockEl === null || blockEl.hasAttribute(RENDERED_ATTRIBUTE)) {
+      return;
     }
 
-    // <details> needs a wrapper so the body can be re-rendered without touching the
-    // <summary>. Other containers get their body rendered directly into the element,
-    // so the author's own layout CSS (flex/grid, figure > figcaption, ...) still applies.
-    const bodyContainer =
-      parsed.tag === "details"
-        ? blockEl.createDiv({ cls: "details-markdown-body" })
-        : blockEl;
+    blockEl.empty();
     // MarkdownRenderChild ties embeds/Dataview/etc. in the body to the note's
     // lifecycle via ctx.addChild, so everything unloads when the note closes.
-    const lifecycleOwner = new MarkdownRenderChild(bodyContainer);
+    const lifecycleOwner = new MarkdownRenderChild(blockEl);
     ctx.addChild(lifecycleOwner);
     blockEl.setAttribute(RENDERED_ATTRIBUTE, "true");
 
-    await MarkdownRenderer.render(
-      this.app,
-      parsed.bodyMarkdown,
-      bodyContainer,
-      ctx.sourcePath,
-      lifecycleOwner
+    await fillBlock(
+      this.renderContext(ctx.sourcePath, lifecycleOwner),
+      blockEl,
+      sourceLines,
+      range.startLine
     );
-    await this.flushMath();
+    await flushMath(this.settings.renderMath);
 
     this.pathBlocks(ctx.sourcePath).rendered.push({
       sectionEl,
       blockEl,
-      bodyContainer,
       lifecycleOwner,
       renderedSource: source,
       everConnected: sectionEl.isConnected,
@@ -352,7 +335,7 @@ export default class DetailsMarkdownPlugin extends Plugin implements LivePreview
       }
       const source = this.sliceRange(lines, range);
       if (source !== entry.renderedSource) {
-        await this.rerenderStaleBody(entry, source, ctx);
+        await this.rerenderStaleBody(entry, source, range.startLine, ctx);
       }
     }
 
@@ -381,6 +364,7 @@ export default class DetailsMarkdownPlugin extends Plugin implements LivePreview
   private async rerenderStaleBody(
     entry: RenderedBlockEntry,
     source: string,
+    startLine: number,
     ctx: MarkdownPostProcessorContext
   ): Promise<void> {
     const parsed = HtmlBlockParser.parse(source, this.tagSet);
@@ -391,19 +375,18 @@ export default class DetailsMarkdownPlugin extends Plugin implements LivePreview
     }
     // Unload the old lifecycle owner so embeds from the previous body do not leak.
     entry.lifecycleOwner.unload();
-    entry.bodyContainer.empty();
-    const lifecycleOwner = new MarkdownRenderChild(entry.bodyContainer);
+    entry.blockEl.empty();
+    const lifecycleOwner = new MarkdownRenderChild(entry.blockEl);
     ctx.addChild(lifecycleOwner);
     entry.lifecycleOwner = lifecycleOwner;
     entry.renderedSource = source;
-    await MarkdownRenderer.render(
-      this.app,
-      parsed.bodyMarkdown,
-      entry.bodyContainer,
-      ctx.sourcePath,
-      lifecycleOwner
+    await fillBlock(
+      this.renderContext(ctx.sourcePath, lifecycleOwner),
+      entry.blockEl,
+      source.split("\n"),
+      startLine
     );
-    await this.flushMath();
+    await flushMath(this.settings.renderMath);
   }
 
   // ---------------------------------------------------------------------------
@@ -435,6 +418,43 @@ export default class DetailsMarkdownPlugin extends Plugin implements LivePreview
    * "Top-level" is judged within the section, so an unrelated wrapper outside it
    * (e.g. another note's fold in an embed) can never suppress a match.
    */
+  /**
+   * Finds the element Obsidian rendered for this block, or builds one.
+   *
+   * A container whose opening tag is followed by a blank line is a truncated HTML
+   * block, and Obsidian may render nothing at all for that section; without a
+   * fallback the whole block would silently stay native. Building it here keeps
+   * such notes working, and the source is the same opening tag either way.
+   */
+  private resolveBlockElement(
+    sectionEl: HTMLElement,
+    tag: string,
+    openTag: string
+  ): HTMLElement | null {
+    const existing = this.findSingleTopLevelBlock(sectionEl, tag);
+    if (existing !== null) {
+      return existing;
+    }
+    if (sectionEl.querySelector(tag) !== null) {
+      // Several candidates: ambiguous, so leave the section native.
+      return null;
+    }
+    const created = createContainerElement(openTag, tag);
+    sectionEl.empty();
+    sectionEl.appendChild(created);
+    return created;
+  }
+
+  private renderContext(sourcePath: string, component: MarkdownRenderChild) {
+    return {
+      app: this.app,
+      supportedTags: this.tagSet,
+      sourcePath,
+      component,
+      renderMath: this.settings.renderMath,
+    };
+  }
+
   private findSingleTopLevelBlock(el: HTMLElement, tag: string): HTMLElement | null {
     // Safe as a selector: SupportedTags only admits /^[a-z][a-z0-9-]*$/ names.
     const topLevel = Array.from(el.querySelectorAll<HTMLElement>(tag)).filter(
@@ -451,21 +471,6 @@ export default class DetailsMarkdownPlugin extends Plugin implements LivePreview
       parent = parent.parentElement;
     }
     return false;
-  }
-
-  /**
-   * Flushes MathJax so `$...$` and `$$...$$` inside a freshly rendered body are
-   * typeset immediately rather than on some later unrelated render.
-   */
-  private async flushMath(): Promise<void> {
-    if (!this.settings.renderMath) {
-      return;
-    }
-    try {
-      await finishRenderMath();
-    } catch (error) {
-      console.error("details-markdown: failed to finish math rendering", error);
-    }
   }
 
   private sliceRange(lines: string[], range: HtmlBlockRange): string {

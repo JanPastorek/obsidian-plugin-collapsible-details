@@ -1,17 +1,10 @@
-import {
-  App,
-  Component,
-  MarkdownRenderer,
-  editorInfoField,
-  editorLivePreviewField,
-  finishRenderMath,
-  sanitizeHTMLToDom,
-} from "obsidian";
+import { App, Component, editorInfoField, editorLivePreviewField } from "obsidian";
 import { EditorState, Extension, RangeSetBuilder, StateField } from "@codemirror/state";
 import { Decoration, DecorationSet, EditorView, WidgetType } from "@codemirror/view";
 import { isBeingEdited } from "./BlockEditingState";
+import { BlockTree, HtmlBlockNode } from "./BlockTree";
+import { createContainerElement, fillBlock, flushMath } from "./ContainerRenderer";
 import { HtmlBlockParser } from "./HtmlBlockParser";
-import { HtmlBlockRangeScanner } from "./HtmlBlockRangeScanner";
 
 /** What the extension needs from the plugin, kept narrow so this file stays testable in isolation. */
 export interface LivePreviewHost {
@@ -42,8 +35,8 @@ class HtmlBlockWidget extends WidgetType {
     private readonly source: string,
     private readonly openTag: string,
     private readonly tag: string,
-    private readonly summaryHtml: string | null,
-    private readonly bodyMarkdown: string,
+    private readonly sourceLines: readonly string[],
+    private readonly startLine: number,
     private readonly sourcePath: string
   ) {
     super();
@@ -90,16 +83,7 @@ class HtmlBlockWidget extends WidgetType {
    * event-handler attribute in a note to survive.
    */
   private createContainer(): HTMLElement {
-    try {
-      const element = sanitizeHTMLToDom(`${this.openTag}</${this.tag}>`).firstElementChild;
-      if (element instanceof HTMLElement && element.tagName.toLowerCase() === this.tag) {
-        element.empty();
-        return element;
-      }
-    } catch (error) {
-      console.error("details-markdown: failed to rebuild container tag", error);
-    }
-    return document.createElement(this.tag);
+    return createContainerElement(this.openTag, this.tag);
   }
 
   private async renderInto(
@@ -108,25 +92,19 @@ class HtmlBlockWidget extends WidgetType {
     view: EditorView
   ): Promise<void> {
     try {
-      if (this.tag === "details" && this.summaryHtml !== null) {
-        // Reading view leaves the native <summary> alone, so its content stays HTML
-        // rather than Markdown here too (rendering Markdown in <summary> is a non-goal).
-        container.createEl("summary").appendChild(sanitizeHTMLToDom(this.summaryHtml));
-      }
-      const body =
-        this.tag === "details"
-          ? container.createDiv({ cls: "details-markdown-body" })
-          : container;
-      await MarkdownRenderer.render(
-        this.host.app,
-        this.bodyMarkdown,
-        body,
-        this.sourcePath,
-        component
+      await fillBlock(
+        {
+          app: this.host.app,
+          supportedTags: this.host.supportedTags,
+          sourcePath: this.sourcePath,
+          component,
+          renderMath: this.host.renderMath,
+        },
+        container,
+        this.sourceLines,
+        this.startLine
       );
-      if (this.host.renderMath) {
-        await finishRenderMath();
-      }
+      await flushMath(this.host.renderMath);
     } catch (error) {
       console.error("details-markdown: failed to render block in Live Preview", error);
     }
@@ -159,26 +137,45 @@ function buildDecorations(state: EditorState, host: LivePreviewHost): Decoration
   if (state.field(editorLivePreviewField, false) !== true) {
     return Decoration.none;
   }
-  const doc = state.doc;
-  const text = doc.toString();
-  const ranges = HtmlBlockRangeScanner.scan(text, host.supportedTags);
-  if (ranges.length === 0) {
+  const lines = state.doc.toString().split("\n");
+  const tree = BlockTree.build(lines, host.supportedTags);
+  if (tree.length === 0) {
     return Decoration.none;
   }
 
-  const lines = text.split("\n");
   const sourcePath = state.field(editorInfoField, false)?.file?.path ?? "";
   const builder = new RangeSetBuilder<Decoration>();
+  addNodes(tree, state, lines, sourcePath, host, builder);
+  return builder.finish();
+}
 
-  for (const range of ranges) {
-    const from = doc.line(range.startLine + 1).from;
-    const to = doc.line(range.endLine + 1).to;
+/**
+ * Replaces each block the cursor is outside of. When the cursor *is* inside one,
+ * that block stays as source but its children are still considered — so editing one
+ * section of a note wrapped in a styling container does not flip the whole note to
+ * raw text. The recursion is what makes the reveal happen per innermost block.
+ */
+function addNodes(
+  nodes: readonly HtmlBlockNode[],
+  state: EditorState,
+  lines: readonly string[],
+  sourcePath: string,
+  host: LivePreviewHost,
+  builder: RangeSetBuilder<Decoration>
+): void {
+  for (const node of nodes) {
+    const from = state.doc.line(node.range.startLine + 1).from;
+    const to = state.doc.line(node.range.endLine + 1).to;
+
     if (isBeingEdited(state.selection.ranges, from, to)) {
+      addNodes(node.children, state, lines, sourcePath, host, builder);
       continue;
     }
-    const source = lines.slice(range.startLine, range.endLine + 1).join("\n");
-    const parsed = HtmlBlockParser.parse(source, host.supportedTags);
-    if (parsed === null || parsed.bodyMarkdown === "") {
+
+    const sourceLines = lines.slice(node.range.startLine, node.range.endLine + 1);
+    const parsed = HtmlBlockParser.parse(sourceLines.join("\n"), host.supportedTags);
+    if (parsed === null) {
+      addNodes(node.children, state, lines, sourcePath, host, builder);
       continue;
     }
     builder.add(
@@ -187,18 +184,17 @@ function buildDecorations(state: EditorState, host: LivePreviewHost): Decoration
       Decoration.replace({
         widget: new HtmlBlockWidget(
           host,
-          source,
+          sourceLines.join("\n"),
           parsed.openTag,
           parsed.tag,
-          parsed.summaryText,
-          parsed.bodyMarkdown,
+          sourceLines,
+          node.range.startLine,
           sourcePath
         ),
         block: true,
       })
     );
   }
-  return builder.finish();
 }
 
 /**
