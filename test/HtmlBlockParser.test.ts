@@ -1,13 +1,14 @@
 import { describe, expect, it } from "vitest";
-import { DetailsBlockParser } from "../src/DetailsBlockParser";
+import { HtmlBlockParser } from "../src/HtmlBlockParser";
 
 /**
  * GIVEN a raw Markdown source section
- * WHEN DetailsBlockParser.parse is called
+ * WHEN HtmlBlockParser.parse is called
  * THEN it returns the block's summary/body for supported shapes, and null otherwise.
  */
-describe("DetailsBlockParser.parse", () => {
-  const parse = (source: string) => DetailsBlockParser.parse(source);
+describe("HtmlBlockParser.parse", () => {
+  const TAGS = new Set(["details", "div", "section"]);
+  const parse = (source: string) => HtmlBlockParser.parse(source, TAGS);
 
   describe("GIVEN a supported block with summary, heading and list", () => {
     const source = [
@@ -157,5 +158,58 @@ describe("DetailsBlockParser.parse", () => {
       const source = ["<detailsfoo>", "body", "</detailsfoo>"].join("\n");
       expect(parse(source)).toBeNull();
     });
+  });
+});
+
+/**
+ * GIVEN a container tag other than <details>
+ * WHEN HtmlBlockParser.parse is called
+ * THEN the body is extracted the same way, without <summary> handling.
+ */
+describe("HtmlBlockParser.parse for non-details containers", () => {
+  const TAGS = new Set(["details", "div", "section"]);
+  const parse = (lines: string[]) => HtmlBlockParser.parse(lines.join("\n"), TAGS);
+
+  it("THEN a <div> block reports its tag and body", () => {
+    const parsed = parse(["<div>", "### Heading", "- item", "</div>"]);
+    expect(parsed).toEqual({
+      tag: "div",
+      openTag: "<div>",
+      summaryText: null,
+      bodyMarkdown: "### Heading\n- item",
+    });
+  });
+
+  it("THEN attributes on the container are not part of the body", () => {
+    const parsed = parse(['<section class="card" style="padding: 12px">', "body", "</section>"]);
+    expect(parsed?.bodyMarkdown).toBe("body");
+  });
+
+  it("THEN <summary> inside a non-details container stays body content", () => {
+    const parsed = parse(["<div>", "<summary>not a fold</summary>", "body", "</div>"]);
+    expect(parsed?.summaryText).toBeNull();
+    expect(parsed?.bodyMarkdown).toBe("<summary>not a fold</summary>\nbody");
+  });
+
+  it("THEN a closing tag naming a different container is rejected", () => {
+    expect(parse(["<div>", "body", "</section>"])).toBeNull();
+  });
+
+  it("THEN a container outside the configured set is rejected", () => {
+    expect(parse(["<span>", "body", "</span>"])).toBeNull();
+  });
+
+  it("THEN the opening tag is reported verbatim, attributes included", () => {
+    const parsed = parse(['<section class="card" id="x">', "body", "</section>"]);
+    expect(parsed?.openTag).toBe('<section class="card" id="x">');
+  });
+
+  it("THEN a self-closing container is rejected", () => {
+    expect(parse(["<div />", "body", "</div>"])).toBeNull();
+  });
+
+  it("THEN math delimiters in the body are passed through untouched", () => {
+    const body = ["Inline $E = mc^2$ and display:", "", "$$\\int_a^b f(x)\\,dx$$"];
+    expect(parse(["<div>", ...body, "</div>"])?.bodyMarkdown).toBe(body.join("\n"));
   });
 });

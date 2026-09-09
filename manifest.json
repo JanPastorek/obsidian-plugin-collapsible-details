@@ -1,10 +1,10 @@
 {
-  "id": "details-markdown",
-  "name": "Details Markdown",
-  "version": "0.1.1",
+  "id": "html-block-markdown",
+  "name": "HTML Block Markdown",
+  "version": "1.0.0",
   "minAppVersion": "1.4.0",
-  "description": "Render Markdown (headings, lists, tables, links, embeds) inside native HTML details blocks in Reading view.",
-  "author": "Nickolay Kondratyev",
-  "authorUrl": "https://github.com/nickolay-kondratyev",
+  "description": "Render Markdown and LaTeX math inside native HTML container blocks (<details>, <div>, <section>, ...), in Reading view and Live Preview.",
+  "author": "Jan Pastorek",
+  "authorUrl": "https://github.com/JanPastorek",
   "isDesktopOnly": false
 }

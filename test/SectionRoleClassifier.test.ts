@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { SectionRoleClassifier } from "../src/SectionRoleClassifier";
-import { DetailsRange } from "../src/DetailsRangeScanner";
+import { HtmlBlockRange } from "../src/HtmlBlockRangeScanner";
 
 /**
  * GIVEN block ranges and a rendered section's line span
@@ -8,7 +8,7 @@ import { DetailsRange } from "../src/DetailsRangeScanner";
  * THEN it says whether the section opens a block, is an escaped fragment, or neither.
  */
 describe("SectionRoleClassifier.classify", () => {
-  const range: DetailsRange = { startLine: 5, endLine: 12 };
+  const range: HtmlBlockRange = { tag: "details", startLine: 5, endLine: 12 };
   const classify = (lineStart: number, lineEnd: number) =>
     SectionRoleClassifier.classify([range], lineStart, lineEnd);
 

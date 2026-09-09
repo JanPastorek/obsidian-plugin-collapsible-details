@@ -1,5 +1,23 @@
 /* Escaped fragment sections of a <details> block whose body is rendered inside the fold.
    Obsidian removes this stylesheet automatically when the plugin is disabled. */
-.details-markdown-hidden-fragment {
+.html-block-markdown-hidden-fragment {
   display: none;
+}
+
+/* A container block rendered in place of its source in Live Preview. */
+.html-block-markdown-lp {
+  cursor: text;
+}
+
+/* Clicking the block drops the cursor into its source, so hint at that on hover
+   without moving anything (a shifting outline while typing is worse than none). */
+.html-block-markdown-lp:hover {
+  box-shadow: 0 0 0 1px var(--background-modifier-border);
+  border-radius: var(--radius-s);
+}
+
+/* Embeds and links inside a rendered block stay normally clickable. */
+.html-block-markdown-lp a,
+.html-block-markdown-lp summary {
+  cursor: pointer;
 }
